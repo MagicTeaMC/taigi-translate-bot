@@ -49,7 +49,7 @@ async fn search_taigitv(keyword: &str) -> Result<Vec<String>, String> {
                 }
             });
 
-            url.map(|u| format!("📺 {} - {}", text, u))
+            url.map(|u| format!("📺 {} - [台語新詞辭庫]({})", text, u))
         })
         .take(3) // Limit to 3 results from TaigiTV
         .collect();
@@ -115,7 +115,7 @@ async fn search_sutian(keyword: &str) -> Result<Vec<String>, String> {
         };
 
         if !word.is_empty() && !pronunciation.is_empty() {
-            results.push(format!("📚 {} [{}] - {}", word, pronunciation, full_url));
+            results.push(format!("📚 {} [{}] - [教育部臺灣台語常用詞辭典]({})", word, pronunciation, full_url));
         }
     }
     // If no mobile results, try desktop table
@@ -144,7 +144,7 @@ async fn search_sutian(keyword: &str) -> Result<Vec<String>, String> {
         };
 
         if !word.is_empty() && !pronunciation.is_empty() {
-            results.push(format!("📚 {} [{}] - {}", word, pronunciation, full_url));
+            results.push(format!("📚 {} [{}] - [教育部臺灣台語常用詞辭典]({})", word, pronunciation, full_url));
         }
     }
 
@@ -211,7 +211,7 @@ async fn search_itaigi(keyword: &str) -> Result<Vec<String>, String> {
                     let itaigi_url = format!("https://itaigi.tw/k/{}", foreign_word);
 
                     results.push(format!(
-                        "🏷️ {} → {} [{}] (👍{} 👎{}) by {} - {}",
+                        "🏷️ {} → {} [{}] (👍{} 👎{}) by {} - [iTaigi 愛台語]({})",
                         foreign_word,
                         taigi_text,
                         pronunciation,
@@ -260,7 +260,7 @@ async fn search_itaigi(keyword: &str) -> Result<Vec<String>, String> {
                 };
 
                 results.push(format!(
-                    "🏷️ {} → {} [{}] (建議) - https://itaigi.tw",
+                    "🏷️ {} → {} [{}] (建議) - [iTaigi 愛台語](https://itaigi.tw)",
                     foreign_display, taigi_text, pronunciation
                 ));
             }
@@ -282,14 +282,16 @@ impl EventHandler for Handler {
 
         if keyword.is_empty() {
             if let Err(why) = msg
-                .channel_id
-                .say(&ctx.http, "Please provide a keyword to search for.")
+                .reply(&ctx.http, "Please provide a keyword to search for.")
                 .await
             {
                 println!("Error sending empty keyword message: {why:?}");
             }
             return;
         }
+
+        // Start typing indicator to show the bot is searching
+        let _ = msg.channel_id.broadcast_typing(&ctx.http).await;
 
         // Search all three sources concurrently
         let (taigitv_result, sutian_result, itaigi_result) = tokio::join!(
@@ -343,7 +345,7 @@ impl EventHandler for Handler {
                 response_message
             };
 
-            if let Err(why) = msg.channel_id.say(&ctx.http, &final_message).await {
+            if let Err(why) = msg.reply(&ctx.http, &final_message).await {
                 println!("Error sending message: {why:?}");
             }
         } else if !error_messages.is_empty() {
@@ -352,7 +354,7 @@ impl EventHandler for Handler {
                 "Could not search any sources. Errors: {}",
                 error_messages.join(", ")
             );
-            if let Err(why) = msg.channel_id.say(&ctx.http, &error_msg).await {
+            if let Err(why) = msg.reply(&ctx.http, &error_msg).await {
                 println!("Error sending error message: {why:?}");
             }
         } else {
