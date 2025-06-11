@@ -270,6 +270,110 @@ async fn search_itaigi(keyword: &str) -> Result<Vec<String>, String> {
     Ok(results)
 }
 
+async fn search_moedict(keyword: &str) -> Result<Vec<String>, String> {
+    let search_url = format!(
+        "https://www.moedict.tw/t/{}.json",
+        urlencoding::encode(keyword)
+    );
+
+    let response_text = match reqwest::get(&search_url).await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.text().await {
+                    Ok(text) => text,
+                    Err(_) => return Err("Error reading response from Moedict".to_string()),
+                }
+            } else {
+                return Ok(Vec::new()); // No results found, but not an error
+            }
+        },
+        Err(_) => return Err("Error fetching from Moedict".to_string()),
+    };
+
+    // Parse JSON response
+    let json: Value = match serde_json::from_str(&response_text) {
+        Ok(json) => json,
+        Err(_) => return Err("Error parsing JSON from Moedict".to_string()),
+    };
+
+    let mut results = Vec::new();
+
+    // Helper function to clean up formatting markers
+    let clean_text = |text: &str| -> String {
+        text.replace("`", "").replace("~", "")
+    };
+
+    // Get the main term and clean it up
+    let main_term = json.get("t")
+        .and_then(|v| v.as_str())
+        .map(|s| clean_text(s))
+        .unwrap_or_else(|| keyword.to_string());
+
+    // Parse the heteronyms (h array)
+    if let Some(heteronyms) = json.get("h").and_then(|v| v.as_array()) {
+        for (idx, heteronym) in heteronyms.iter().enumerate() {
+            if idx >= 2 { break; } // Limit to 2 heteronyms to avoid spam
+
+            // Get pronunciation
+            let pronunciation = heteronym.get("T")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            // Get definitions
+            if let Some(definitions) = heteronym.get("d").and_then(|v| v.as_array()) {
+                for (def_idx, definition) in definitions.iter().enumerate() {
+                    if def_idx >= 1 { break; } // Only show first definition per heteronym
+
+                    let part_of_speech = definition.get("type")
+                        .and_then(|v| v.as_str())
+                        .map(|s| clean_text(s))
+                        .unwrap_or_else(|| "".to_string());
+
+                    let definition_text = definition.get("f")
+                        .and_then(|v| v.as_str())
+                        .map(|s| clean_text(s))
+                        .unwrap_or_else(|| "無定義".to_string());
+
+                    // Create user-readable URL
+                    let moedict_url = format!("https://www.moedict.org/#'{}", 
+                        urlencoding::encode(keyword));
+
+                    // Format the result
+                    let formatted_result = if !pronunciation.is_empty() && !part_of_speech.is_empty() {
+                        format!(
+                            "📖 {} [{}] ({}) {} - [萌典]({})",
+                            main_term, 
+                            pronunciation, 
+                            part_of_speech,
+                            definition_text,
+                            moedict_url
+                        )
+                    } else if !pronunciation.is_empty() {
+                        format!(
+                            "📖 {} [{}] {} - [萌典]({})",
+                            main_term, 
+                            pronunciation, 
+                            definition_text,
+                            moedict_url
+                        )
+                    } else {
+                        format!(
+                            "📖 {} {} - [萌典]({})",
+                            main_term, 
+                            definition_text,
+                            moedict_url
+                        )
+                    };
+
+                    results.push(formatted_result);
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
@@ -293,11 +397,12 @@ impl EventHandler for Handler {
         // Start typing indicator to show the bot is searching
         let _ = msg.channel_id.broadcast_typing(&ctx.http).await;
 
-        // Search all three sources concurrently
-        let (taigitv_result, sutian_result, itaigi_result) = tokio::join!(
+        // Search all four sources concurrently
+        let (taigitv_result, sutian_result, itaigi_result, moedict_result) = tokio::join!(
             search_taigitv(keyword),
             search_sutian(keyword),
-            search_itaigi(keyword)
+            search_itaigi(keyword),
+            search_moedict(keyword)
         );
 
         let mut all_results = Vec::new();
@@ -319,6 +424,12 @@ impl EventHandler for Handler {
         match itaigi_result {
             Ok(mut results) => all_results.append(&mut results),
             Err(err) => error_messages.push(format!("iTaigi: {}", err)),
+        }
+
+        // Collect Moedict results
+        match moedict_result {
+            Ok(mut results) => all_results.append(&mut results),
+            Err(err) => error_messages.push(format!("Moedict: {}", err)),
         }
 
         // Handle results
